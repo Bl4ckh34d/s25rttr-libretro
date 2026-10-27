@@ -1,0 +1,24 @@
+diff --git a/src/mixer.c b/src/mixer.c
+index 25bd6de..6c96109 100644
+--- a/src/mixer.c
++++ b/src/mixer.c
+@@ -539,6 +539,19 @@ int Mix_OpenAudioDevice(int frequency, Uint16 format, int nchannels, int chunksi
+ }
+ 
+ /* Open the mixer with a certain desired audio format */
++#ifdef RTTR_LIBRETRO
++/* The frontend owns the audio clock. The dummy device remains paused. */
++void Mix_LibretroRender(void *stream, int len)
++{
++    Mix_LockAudio();
++    mix_channels(NULL, (Uint8 *)stream, len);
++    Mix_UnlockAudio();
++}
++void Mix_LibretroPauseDevice(void)
++{
++    SDL_PauseAudioDevice(audio_device, 1);
++}
++#endif
+ int Mix_OpenAudio(int frequency, Uint16 format, int nchannels, int chunksize)
+ {
+     return Mix_OpenAudioDevice(frequency, format, nchannels, chunksize, NULL,

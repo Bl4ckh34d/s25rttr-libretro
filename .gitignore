@@ -1,0 +1,15 @@
+/deps/
+/build/
+/release/
+/libretro/lib/
+__pycache__/
+*.pyc
+*.log
+*.so
+*.a
+*.exe
+*.sav
+*.state*
+*.ogg
+*.OGG
+/libretro/assets/

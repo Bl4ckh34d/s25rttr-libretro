@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/Farmer-Markus/s25rttr-android.git",
+  "revision": "4c56feb90b004fbe19edb7ddac4b6bf2a36e6466",
+  "patches": [
+    {
+      "path": "app/jni/s25client",
+      "revision": "f5c16f1c127d3919f3c8f2336055c83f9184fb5a",
+      "patch": "patches/rttr.patch"
+    },
+    {
+      "path": "external/SDL",
+      "revision": "272b0733237555c749bc6dd82a8dd0211ab2e22d",
+      "patch": "patches/sdl.patch"
+    },
+    {
+      "path": "external/SDL_mixer",
+      "revision": "d3b4d9cf9cae405ef3e0c15e5203f3aa14657c67",
+      "patch": "patches/sdl-mixer.patch"
+    }
+  ]
+}

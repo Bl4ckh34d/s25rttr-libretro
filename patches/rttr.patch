@@ -1,0 +1,236 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f9feb0d..ef0c2c8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -333,6 +333,7 @@ endif()
+ 
+ add_subdirectory(external)
+ add_subdirectory(libs)
++if(NOT RTTR_LIBRETRO)
+ add_subdirectory(extras)
+ 
+ find_package(Gettext REQUIRED)
+@@ -353,6 +354,7 @@ endif()
+ configure_file(copyDepsToBuildDir.cmake . @ONLY)
+ add_custom_command(TARGET translations POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -D CMAKE_BUILD_TYPE=$<CONFIG> -P ${CMAKE_CURRENT_BINARY_DIR}/copyDepsToBuildDir.cmake)
++endif()
+ 
+ if(ClangFormat_FOUND)
+     add_clangformat_folder(${CMAKE_CURRENT_SOURCE_DIR}/libs TRUE)
+diff --git a/extras/audioDrivers/SDL/AudioSDL.cpp b/extras/audioDrivers/SDL/AudioSDL.cpp
+index e7e2ee7..0d65ff3 100644
+--- a/extras/audioDrivers/SDL/AudioSDL.cpp
++++ b/extras/audioDrivers/SDL/AudioSDL.cpp
+@@ -70,6 +70,10 @@ static AudioSDL* currentInstance = nullptr;
+ bool AudioSDL::Initialize()
+ {
+     initialized = false;
++#ifdef RTTR_LIBRETRO
++    SDL_SetMainReady();
++    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
++#endif
+     // SDL_thread leaks a mutex on regular runs and SDL_mixer a lot on initialization error
+     rttr::ScopedLeakDisabler _;
+     if(SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+@@ -91,6 +95,10 @@ bool AudioSDL::Initialize()
+         return false;
+     }
+     SetNumChannels(Mix_AllocateChannels(DEFAULT_NUM_CHANNELS));
++#ifdef RTTR_LIBRETRO
++    extern void PauseLibretroMixer();
++    PauseLibretroMixer();
++#endif
+     Mix_SetMusicCMD(nullptr);
+     currentInstance = this;
+     Mix_HookMusicFinished(AudioSDL::MusicFinished);
+@@ -215,8 +223,14 @@ void AudioSDL::PlayMusic(const driver::RawSoundHandle& sound, int repeats)
+  */
+ void AudioSDL::StopMusic()
+ {
++#ifdef RTTR_LIBRETRO
++    // Audio advances only inside retro_run. Waiting for a fade during context
++    // teardown would deadlock when Mix_FreeMusic waits for that fade to finish.
++    Mix_HaltMusic();
++#else
+     // Musik anhalten
+     Mix_FadeOutMusic(1000);
++#endif
+ }
+ 
+ void AudioSDL::doStopEffect(int channel)
+diff --git a/libs/CMakeLists.txt b/libs/CMakeLists.txt
+index 4a73f78..6d16350 100644
+--- a/libs/CMakeLists.txt
++++ b/libs/CMakeLists.txt
+@@ -7,5 +7,7 @@ add_subdirectory(driver)
+ add_subdirectory(libGamedata)
+ add_subdirectory(libsamplerate)
+ add_subdirectory(rttrConfig)
+-add_subdirectory(s25client)
++if(NOT RTTR_LIBRETRO)
++    add_subdirectory(s25client)
++endif()
+ add_subdirectory(s25main)
+diff --git a/libs/s25main/GameManager.cpp b/libs/s25main/GameManager.cpp
+index 4c33ee0..b4397d7 100644
+--- a/libs/s25main/GameManager.cpp
++++ b/libs/s25main/GameManager.cpp
+@@ -23,6 +23,11 @@
+ #include "s25util/Log.h"
+ #include "s25util/error.h"
+ #include <boost/pointer_cast.hpp>
++#ifdef RTTR_LIBRETRO
++#include "Bridge.h"
++bool LoadLibretroAudio(AudioDriverWrapper&);
++void ConfigureLibretroSettings();
++#endif
+ 
+ GameManager::GameManager(Log& log, Settings& settings, VideoDriverWrapper& videoDriver, AudioDriverWrapper& audioDriver,
+                          WindowManager& windowManager)
+@@ -39,9 +44,16 @@ bool GameManager::Start()
+ {
+     // Einstellungen laden
+     settings_.Load();
++#ifdef RTTR_LIBRETRO
++    ConfigureLibretroSettings();
++#endif
+ 
+     /// Videotreiber laden
++#ifdef RTTR_LIBRETRO
++    if(!videoDriver_.LoadDriver(CreateLibretroVideo(&windowManager_)))
++#else
+     if(!videoDriver_.LoadDriver(settings_.driver.video))
++#endif
+     {
+         s25util::error(_("Video driver couldn't be loaded!"));
+         return false;
+@@ -57,7 +69,11 @@ bool GameManager::Start()
+     videoDriver_.setGuiScalePercent(settings_.video.guiScale);
+ 
+     /// Audiodriver laden
++#ifdef RTTR_LIBRETRO
++    if(!LoadLibretroAudio(audioDriver_))
++#else
+     if(!audioDriver_.LoadDriver(settings_.driver.audio))
++#endif
+     {
+         s25util::warning(_("Audio driver couldn't be loaded!"));
+         // return false;
+diff --git a/libs/s25main/Loader.cpp b/libs/s25main/Loader.cpp
+index 97a7562..f2fe8ed 100644
+--- a/libs/s25main/Loader.cpp
++++ b/libs/s25main/Loader.cpp
+@@ -1166,8 +1166,20 @@ void addDefaultResourceFolders(const RttrConfig& config, ArchiveLocator& locator
+         locator.addOverrideFolder(userOverrides);
+ }
+ 
++#ifdef RTTR_LIBRETRO
++// GLES resources belong to the frontend context and must not survive its teardown.
++static std::unique_ptr<Loader> libretroLoader;
++void ResetLibretroResources() { libretroLoader.reset(); }
++Loader& getGlobalLoader()
++{
++    if(!libretroLoader)
++        libretroLoader = std::make_unique<Loader>(LOG, RTTRCONFIG);
++    return *libretroLoader;
++}
++#else
+ Loader& getGlobalLoader()
+ {
+     static Loader loader{LOG, RTTRCONFIG};
+     return loader;
+ }
++#endif
+diff --git a/libs/s25main/Settings.cpp b/libs/s25main/Settings.cpp
+index db1ade3..799681c 100644
+--- a/libs/s25main/Settings.cpp
++++ b/libs/s25main/Settings.cpp
+@@ -133,7 +133,12 @@ void Settings::LoadDefaults()
+     // lobby
+     // {
+ 
++#ifdef RTTR_LIBRETRO
++    // Android application processes do not necessarily have a USER variable.
++    lobby.name = "Spieler";
++#else
+     lobby.name = System::getUserName();
++#endif
+     lobby.portraitIndex = 0;
+     lobby.password.clear();
+     lobby.save_password = false;
+diff --git a/libs/s25main/desktops/dskGameInterface.h b/libs/s25main/desktops/dskGameInterface.h
+index 483f653..e0583ba 100644
+--- a/libs/s25main/desktops/dskGameInterface.h
++++ b/libs/s25main/desktops/dskGameInterface.h
+@@ -104,6 +104,10 @@ public:
+                           bool enable_military_buildings);
+ 
+     const GameWorldView& GetView() const { return gwv; }
++    void ScrollView(const DrawPoint& delta) { gwv.MoveBy(delta); }
++#ifdef RTTR_LIBRETRO
++    GameWorldView& LibretroView() { return gwv; }
++#endif
+ 
+     void OnChatCommand(const std::string& cmd) override;
+ 
+diff --git a/libs/s25main/network/GameClient.cpp b/libs/s25main/network/GameClient.cpp
+index da25d03..2021f7f 100644
+--- a/libs/s25main/network/GameClient.cpp
++++ b/libs/s25main/network/GameClient.cpp
+@@ -1703,15 +1703,16 @@ void GameClient::SystemChat(const std::string& text, unsigned char fromPlayerIdx
+         ci->CI_Chat(fromPlayerIdx, ChatDestination::System, text);
+ }
+ 
+-bool GameClient::SaveToFile(const boost::filesystem::path& filepath)
++bool GameClient::SaveToFile(const boost::filesystem::path& filepath, bool showFeedback)
+ {
+-    mainPlayer.sendMsg(GameMessage_Chat(GetPlayerId(), ChatDestination::System, _("Saving game...")));
+-
+-    // Mond malen
+-    Position moonPos = VIDEODRIVER.GetMousePos();
+-    moonPos.y -= 40;
+-    LOADER.GetImageN("resource", 33)->DrawFull(moonPos);
+-    VIDEODRIVER.SwapBuffers();
++    if(showFeedback)
++    {
++        mainPlayer.sendMsg(GameMessage_Chat(GetPlayerId(), ChatDestination::System, _("Saving game...")));
++        Position moonPos = VIDEODRIVER.GetMousePos();
++        moonPos.y -= 40;
++        LOADER.GetImageN("resource", 33)->DrawFull(moonPos);
++        VIDEODRIVER.SwapBuffers();
++    }
+ 
+     Savegame save;
+ 
+diff --git a/libs/s25main/network/GameClient.h b/libs/s25main/network/GameClient.h
+index 434df00..244b53e 100644
+--- a/libs/s25main/network/GameClient.h
++++ b/libs/s25main/network/GameClient.h
+@@ -171,7 +171,7 @@ public:
+     /// Spiel pausiert?
+     bool IsPaused() const { return framesinfo.isPaused; }
+     /// Schreibt Header der Save-Datei
+-    bool SaveToFile(const boost::filesystem::path& filepath);
++    bool SaveToFile(const boost::filesystem::path& filepath, bool showFeedback = true);
+     /// Visuelle Einstellungen aus den richtigen ableiten
+     void ResetVisualSettings();
+     void SystemChat(const std::string& text) override;
+diff --git a/libs/s25main/world/GameWorldView.h b/libs/s25main/world/GameWorldView.h
+index c405ec8..4d38da7 100644
+--- a/libs/s25main/world/GameWorldView.h
++++ b/libs/s25main/world/GameWorldView.h
+@@ -112,6 +112,13 @@ public:
+     void MoveToLastPosition();
+ 
+     DrawPoint GetOffset() const { return offset; }
++#ifdef RTTR_LIBRETRO
++    unsigned GetHudFlags() const { return unsigned(show_bq) | (unsigned(show_names)<<1) | (unsigned(show_productivity)<<2); }
++    void RestoreHudFlags(unsigned flags) {
++        show_bq=flags&1;show_names=flags&2;show_productivity=flags&4;
++        onHudSettingsChanged();
++    }
++#endif
+ 
+     /// Add a debug node printer
+     void AddDrawNodeCallback(IDrawNodeCallback* newCallback);

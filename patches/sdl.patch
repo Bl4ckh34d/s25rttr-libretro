@@ -1,0 +1,44 @@
+diff --git a/src/audio/SDL_audio.c b/src/audio/SDL_audio.c
+index 1ab847a..7a98509 100644
+--- a/src/audio/SDL_audio.c
++++ b/src/audio/SDL_audio.c
+@@ -664,7 +664,7 @@ void SDL_ClearQueuedAudio(SDL_AudioDeviceID devid)
+     current_audio.impl.UnlockDevice(device);
+ }
+ 
+-#ifdef SDL_AUDIO_DRIVER_ANDROID
++#if defined(SDL_AUDIO_DRIVER_ANDROID) && !defined(RTTR_LIBRETRO)
+ extern void Android_JNI_AudioSetThreadPriority(int, int);
+ #endif
+ 
+@@ -681,7 +681,7 @@ static int SDLCALL SDL_RunAudio(void *userdata)
+ 
+     SDL_assert(!device->iscapture);
+ 
+-#ifdef SDL_AUDIO_DRIVER_ANDROID
++#if defined(SDL_AUDIO_DRIVER_ANDROID) && !defined(RTTR_LIBRETRO)
+     {
+         /* Set thread priority to THREAD_PRIORITY_AUDIO */
+         Android_JNI_AudioSetThreadPriority(device->iscapture, device->id);
+@@ -813,7 +813,7 @@ static int SDLCALL SDL_CaptureAudio(void *userdata)
+ 
+     SDL_assert(device->iscapture);
+ 
+-#ifdef SDL_AUDIO_DRIVER_ANDROID
++#if defined(SDL_AUDIO_DRIVER_ANDROID) && !defined(RTTR_LIBRETRO)
+     {
+         /* Set thread priority to THREAD_PRIORITY_AUDIO */
+         Android_JNI_AudioSetThreadPriority(device->iscapture, device->id);
+diff --git a/src/thread/pthread/SDL_systhread.c b/src/thread/pthread/SDL_systhread.c
+index 2105673..cd90372 100644
+--- a/src/thread/pthread/SDL_systhread.c
++++ b/src/thread/pthread/SDL_systhread.c
+@@ -70,7 +70,7 @@ static const int sig_list[] = {
+ 
+ static void *RunThread(void *data)
+ {
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) && !defined(RTTR_LIBRETRO)
+     Android_JNI_SetupThread();
+ #endif
+     SDL_RunThread((SDL_Thread *)data);
