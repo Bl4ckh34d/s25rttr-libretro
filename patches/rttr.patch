@@ -72,8 +72,33 @@ index 4a73f78..6d16350 100644
 +    add_subdirectory(s25client)
 +endif()
  add_subdirectory(s25main)
+diff --git a/libs/s25main/FramesInfo.h b/libs/s25main/FramesInfo.h
+index 338ccbd..144ddce 100644
+--- a/libs/s25main/FramesInfo.h
++++ b/libs/s25main/FramesInfo.h
+@@ -5,13 +5,20 @@
+ #pragma once
+ 
+ #include <chrono>
++#ifdef RTTR_LIBRETRO
++#include "SimulationClock.h"
++#endif
+ 
+ /// Struct that stores information about the frames, like GF status...
+ struct FramesInfo
+ {
+     // No need for 64 bit std::millis
+     using milliseconds32_t = std::chrono::duration<uint32_t, std::milli>; //-V:milliseconds32_t:813
++#ifdef RTTR_LIBRETRO
++    using UsedClock = LibretroSimulationClock;
++#else
+     using UsedClock = std::chrono::steady_clock;
++#endif
+ 
+     FramesInfo();
+     void Clear();
 diff --git a/libs/s25main/GameManager.cpp b/libs/s25main/GameManager.cpp
-index 4c33ee0..b4397d7 100644
+index 4c33ee0..80d2db0 100644
 --- a/libs/s25main/GameManager.cpp
 +++ b/libs/s25main/GameManager.cpp
 @@ -23,6 +23,11 @@
@@ -117,6 +142,25 @@ index 4c33ee0..b4397d7 100644
      {
          s25util::warning(_("Audio driver couldn't be loaded!"));
          // return false;
+@@ -102,8 +118,18 @@ bool GameManager::Run()
+ 
+     // Get this before the run so we know if we are currently skipping
+     const unsigned targetSkipGF = GAMECLIENT.skiptogf;
++#ifdef RTTR_LIBRETRO
++    // Poll input and draw once, but service both ends of the local game for every
++    // simulated time slice. Native desktop builds retain their original loop.
++    do
++    {
++        GAMECLIENT.Run();
++        GAMESERVER.Run();
++    } while(NextLibretroSimulationStep());
++#else
+     GAMECLIENT.Run();
+     GAMESERVER.Run();
++#endif
+ 
+     if(targetSkipGF)
+     {
 diff --git a/libs/s25main/Loader.cpp b/libs/s25main/Loader.cpp
 index 97a7562..f2fe8ed 100644
 --- a/libs/s25main/Loader.cpp

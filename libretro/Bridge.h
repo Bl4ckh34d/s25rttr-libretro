@@ -11,3 +11,4 @@ void rttr_message(const char* message);
 void* rttr_gl_proc(const char* name);
 void ScrollLibretroMap(int dx,int dy);
 void SendLibretroGameShortcut(char key);
+bool NextLibretroSimulationStep();

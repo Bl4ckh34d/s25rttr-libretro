@@ -1,5 +1,6 @@
 #include "Bridge.h"
 #include "AudioClock.h"
+#include "SimulationClock.h"
 #include "SaveStates.h"
 #include "SaveStateCodec.h"
 #include "AudioSDL.h"
@@ -47,6 +48,39 @@ static bool glReady=false;
 static bool firstStart=false;
 static AudioClock audioClock;
 static std::chrono::steady_clock::time_point audioPrevious;
+static std::chrono::steady_clock::time_point simulationPrevious, simulationDeadline;
+static SimulationPacer simulationPacer;
+static float previousFrontendRate=60;
+bool NextLibretroSimulationStep() {
+    if(std::chrono::steady_clock::now()>=simulationDeadline)return false;
+    uint64_t ns;
+    if(!simulationPacer.next(ns))return false;
+    LibretroSimulationClock::advance(ns);
+    return true;
+}
+static void prepareSimulation() {
+    const auto now=std::chrono::steady_clock::now();
+    const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(now-simulationPrevious).count();
+    simulationPrevious=now;
+    float rate=60;
+    retro_throttle_state throttle{};
+    if(dynamic_cast<dskGameInterface*>(WINDOWMANAGER.GetCurrentDesktop())) {
+        if(environment(RETRO_ENVIRONMENT_GET_THROTTLE_STATE,&throttle)) {
+            if(throttle.mode==RETRO_THROTTLE_FAST_FORWARD)rate=throttle.rate;
+        } else {
+            bool fast=false;
+            if(environment(RETRO_ENVIRONMENT_GET_FASTFORWARDING,&fast)&&fast)rate=0;
+        }
+    }
+    if(rate!=previousFrontendRate) {
+        rttr_log(("Frontend simulation rate: "+std::to_string(rate)+" Hz (60 = normal, 0 = unlimited)").c_str());
+        previousFrontendRate=rate;
+    }
+    simulationPacer.begin(static_cast<uint64_t>(std::max<int64_t>(0,elapsed)),rate);
+    // Keep input/rendering responsive even with the frontend's unlimited setting.
+    simulationDeadline=now+std::chrono::milliseconds(8);
+    NextLibretroSimulationStep();
+}
 static std::vector<uint8_t> suspendedState;
 void ResetLibretroResources();
 extern "C" void Mix_LibretroRender(void*,int);
@@ -146,6 +180,8 @@ static bool startGame() {
     ConfigureSaveStates(userData/"libretro");
     audioClock.reset();
     audioPrevious=std::chrono::steady_clock::now();
+    simulationPrevious=audioPrevious;
+    simulationPacer=SimulationPacer{};
     rttr_log("Game initialized; menu rendering active");
     return true;
 }
@@ -232,6 +268,7 @@ RETRO_API void retro_run() {
             std::vector<uint8_t>().swap(suspendedState);
         }
         RunPendingStateLoad();
+        prepareSimulation();
         if(!game->Run()) { environment(RETRO_ENVIRONMENT_SHUTDOWN,nullptr);return; }
         // Finish rendering before RetroArch samples this texture in its shared context.
         glFinish();

@@ -14,6 +14,8 @@
 struct Event {unsigned frame;int x,y,left,right,scrollX,scrollY;};
 static std::vector<Event> events;
 static unsigned currentFrame=0;
+static bool testFastForward=false;
+static float fastForwardRate=60;
 static const char* systemDir;
 static const char* saveDir;
 static retro_hw_render_callback hw{};
@@ -30,6 +32,10 @@ static void logger(enum retro_log_level,const char* fmt,...) {
 }
 static bool environment(unsigned cmd,void* data) {
     switch(cmd) {
+    case RETRO_ENVIRONMENT_GET_THROTTLE_STATE:
+        if(!testFastForward)return false;
+        *static_cast<retro_throttle_state*>(data)={unsigned(fastForwardRate==60?RETRO_THROTTLE_NONE:RETRO_THROTTLE_FAST_FORWARD),fastForwardRate};return true;
+    case RETRO_ENVIRONMENT_GET_FASTFORWARDING:*static_cast<bool*>(data)=testFastForward&&fastForwardRate!=60;return true;
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:static_cast<retro_log_callback*>(data)->log=logger;return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:*static_cast<const char**>(data)=systemDir;return true;
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:*static_cast<const char**>(data)=saveDir;return true;
@@ -108,6 +114,11 @@ int main(int argc,char** argv) {
     retro_game_info game{argv[2],nullptr,0,nullptr};
     if(!retro_load_game(&game)){std::puts("FAIL content rejected");return 1;}
     const bool testStates=std::getenv("RTTR_TEST_STATES");
+    testFastForward=std::getenv("RTTR_TEST_FAST_FORWARD");
+    std::vector<double> simulationRates;
+    unsigned lastGF=0;
+    std::chrono::steady_clock::time_point phaseStart;
+    bool fastForwardPassed=false;
     const bool testContext=std::getenv("RTTR_TEST_CONTEXT_RESET");
     if(testStates && !retro_serialize_size()) {std::puts("FAIL save states unsupported");return 1;}
     hw.context_reset();
@@ -135,6 +146,32 @@ int main(int argc,char** argv) {
         if(i==300) {audioMeasureStart=std::chrono::steady_clock::now();audioMeasureSamples=audioFrames;}
         currentFrame=i;
         auto start=std::chrono::steady_clock::now();retro_run();
+        if(testFastForward && i>=600 && (i-600)%150==0 && i<=1350) {
+            const auto measuredAt=std::chrono::steady_clock::now();
+            std::vector<uint8_t> stateBytes(retro_serialize_size());SavedState state;
+            if(!retro_serialize(stateBytes.data(),stateBytes.size())||!decodeState(stateBytes.data(),stateBytes.size(),state)) {
+                std::puts("FAIL fast-forward test needs an active game");return 1;
+            }
+            const auto now=std::chrono::steady_clock::now();
+            if(i>600) {
+                const double rate=(state.gameFrame-lastGF)/std::chrono::duration<double>(measuredAt-phaseStart).count();
+                simulationRates.push_back(rate);
+                std::printf("SIMULATION requested %.1f Hz: %.2f gameframes/second\n",fastForwardRate,rate);std::fflush(stdout);
+            }
+            lastGF=state.gameFrame;phaseStart=now;
+            if(i==750)fastForwardRate=120;
+            if(i==900)fastForwardRate=180;
+            if(i==1050)fastForwardRate=60;
+            if(i==1200)fastForwardRate=0;
+            if(i==1350) {
+                const auto base=simulationRates[0];
+                fastForwardPassed=base>1&&simulationRates[1]/base>1.7&&simulationRates[1]/base<2.3
+                    &&simulationRates[2]/base>2.6&&simulationRates[2]/base<3.4
+                    &&simulationRates[3]/base>0.8&&simulationRates[3]/base<1.2&&simulationRates[4]>simulationRates[2];
+                std::puts(fastForwardPassed?"PASS frontend fast-forward ratios and release":"FAIL frontend fast-forward ratios or release");
+                fastForwardRate=60;
+            }
+        }
         if(inputState && i==330) {
             if(!retro_unserialize(saved.data(),saved.size())) {std::puts("FAIL persisted state rejected after restart");return 1;}
         }
@@ -200,5 +237,5 @@ int main(int argc,char** argv) {
     eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
     eglDestroyContext(display,context);eglDestroySurface(display,surface);eglTerminate(display);
     if(testStates&&!restored)std::puts("FAIL state was not restored, including graphics context recovery when requested");
-    return frames>300&&nonblack>10000&&wrongFramebuffer==0&&(testStates?restored:(measuredAudioRate>43000&&measuredAudioRate<45200))?0:1;
+    return frames>300&&nonblack>10000&&wrongFramebuffer==0&&(!testFastForward||fastForwardPassed)&&(testStates?restored:(testFastForward||(measuredAudioRate>43000&&measuredAudioRate<45200)))?0:1;
 }

@@ -9,6 +9,7 @@ This repository contains integration source, tests and patches. **No original ga
 - Left stick mouse movement, with RT/R2 for precision.
 - A/B mouse clicks, D-pad/right-stick map scrolling and building display shortcuts.
 - Music scheduling independent of rendering frame rate.
+- Fast-forward using RetroArch's hotkeys and configured rate, including unlimited mode.
 - RetroArch save/load slots, including loading after a core restart.
 - In-memory game recovery after graphics-context loss when switching away from the app.
 
@@ -52,6 +53,8 @@ Copy `libretro/retroarch/rttr_libretro.info` to the core-info directory. The exa
 
 Use RetroArch's normal **Save State / Load State** commands or bind your preferred hotkeys. Stick-click save/load bindings used during testing were frontend settings, not hardcoded core controls.
 
+Use RetroArch's normal fast-forward hold/toggle hotkeys and **Settings > Frame Throttle > Fast-Forward Rate**. The core reads `GET_THROTTLE_STATE` and advances the local simulation at the frontend's requested rate. A rate of zero means unlimited, subject to hardware performance. Input and rendering still run once per frontend frame; additional simulation steps have an 8 ms work budget so unlimited fast-forward remains responsive. Releasing fast-forward returns immediately to the game's selected speed. Music keeps its normal real-time clock; frontend audio settings remain under RetroArch's control. Older frontends that expose only `GET_FASTFORWARDING` fall back to unlimited acceleration because they do not provide a numerical rate.
+
 ## Xbox controls
 
 | Control | Action |
@@ -72,7 +75,7 @@ LT/L2, View and stick clicks remain available for frontend hotkeys. Disable Retr
 
 The original integration was built and tested on the TV: smooth gameplay, mouse controls, overlay shortcuts, correct music tempo and physical-controller quicksave/quickload were confirmed. Engine tests verified world/camera rollback, corrupt-state rejection, loading in a fresh process and recovery after explicitly recreating EGL. Rendering tests alone did not catch an earlier frontend synchronization issue, so physical RetroArch testing remains necessary.
 
-Header-only tests are in `libretro/tests/{audio-clock,buttons,controller,save-state}.cpp`. Build each with C++17 and include paths `libretro` and `libretro/include`; link `save-state.cpp` with zlib (`-lz`). `render.cpp` is the Android GLES integration harness; it requires user-provided game resources. Its optional environment flags include `RTTR_TEST_STATES=1`, `RTTR_TEST_CONTEXT_RESET=1`, `RTTR_TEST_FRAMES=1600`, `RTTR_TEST_STATE_INPUT` and `RTTR_TEST_STATE_OUTPUT`. `state-events.txt` drives the test-game setup.
+Header-only tests are in `libretro/tests/{audio-clock,buttons,controller,save-state,simulation-clock}.cpp`. Build each with C++17 and include paths `libretro` and `libretro/include`; link `save-state.cpp` with zlib (`-lz`). `render.cpp` is the Android GLES integration harness; it requires user-provided game resources. Its optional environment flags include `RTTR_TEST_STATES=1`, `RTTR_TEST_CONTEXT_RESET=1`, `RTTR_TEST_FRAMES=1600`, `RTTR_TEST_STATE_INPUT` and `RTTR_TEST_STATE_OUTPUT`. `state-events.txt` drives the test-game setup. `RTTR_TEST_FAST_FORWARD=1` with at least 1400 frames measures actual gameframe progression at normal, 2x, 3x, normal again and unlimited speed. Run it separately from the state/context tests; its save operations interrupt audio measurement, so use a separate uninterrupted run to check audio rate.
 
 RetroArch 1.20's Android controller-port mapping has a separate frontend bug when devices are reordered. It can affect remote buttons and menu navigation. This core does not fix RetroArch globally; see [upstream #19924](https://github.com/libretro/RetroArch/pull/19924). Do not treat frontend FPS alone as evidence of smooth gameplay.
 
