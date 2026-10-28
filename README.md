@@ -13,7 +13,7 @@ This repository contains integration source, tests and patches. **No original ga
 - RetroArch save/load slots, including loading after a core restart.
 - In-memory game recovery after graphics-context loss when switching away from the app.
 
-Save states restore the world, local player, camera, zoom, building overlays and pause state. Music playback position and temporary open windows are not restored. Saving requires an active single-player game; loading also works from the game menu. Rewind, run-ahead and netplay are **not supported**. RetroArch Reset is currently a no-op. An Android process kill loses the in-memory recovery snapshot; save to disk before leaving a session.
+Save states restore the world, local player, camera, zoom, building overlays and pause state. Music playback position and temporary open windows are not restored. Saving requires an active single-player game; loading also works from the game menu. Rewind, run-ahead and netplay are **not supported**. RetroArch Reset stops the current game and restarts the engine at its main menu. Disk save states remain available. An Android process kill loses the in-memory recovery snapshot; save to disk before leaving a session.
 
 ## Build
 
@@ -78,6 +78,10 @@ The original integration was built and tested on the TV: smooth gameplay, mouse 
 Header-only tests are in `libretro/tests/{audio-clock,buttons,controller,save-state,simulation-clock}.cpp`. Build each with C++17 and include paths `libretro` and `libretro/include`; link `save-state.cpp` with zlib (`-lz`). `render.cpp` is the Android GLES integration harness; it requires user-provided game resources. Its optional environment flags include `RTTR_TEST_STATES=1`, `RTTR_TEST_CONTEXT_RESET=1`, `RTTR_TEST_FRAMES=1600`, `RTTR_TEST_STATE_INPUT` and `RTTR_TEST_STATE_OUTPUT`. `state-events.txt` drives the test-game setup. `RTTR_TEST_FAST_FORWARD=1` with at least 1400 frames measures actual gameframe progression at normal, 2x, 3x, normal again and unlimited speed. Run it separately from the state/context tests; its save operations interrupt audio measurement, so use a separate uninterrupted run to check audio rate.
 
 RetroArch 1.20's Android controller-port mapping has a separate frontend bug when devices are reordered. It can affect remote buttons and menu navigation. This core does not fix RetroArch globally; see [upstream #19924](https://github.com/libretro/RetroArch/pull/19924). Do not treat frontend FPS alone as evidence of smooth gameplay.
+
+The GLES harness also accepts `RTTR_TEST_RESET=1` together with `RTTR_TEST_STATES=1` and `RTTR_TEST_FRAMES=1600`. It first saves a live game, requires Reset to stop that game, and then verifies that loading restores the saved world and camera. Do not combine this flag with the context-loss test. Reset is deferred to `retro_run` so GL resource destruction happens with a current render context.
+
+Publication check, 2026-10-29: the normal build completed and matched the installed artifact byte for byte (6,647,544 bytes, SHA-256 `2ecede0a118dadf0996abc1c55a7f1aca5b53d624bad77e730ed00b8bf835916`). All five header-level tests passed on ARM; the three upstream patches were verified. Before publication, the reset GLES regression failed with the old callback and passed after the fix, and actual RetroArch reset/load, fast-forward and Close Content were checked in gameplay.
 
 ## Credits and license
 

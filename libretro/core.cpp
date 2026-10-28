@@ -46,6 +46,7 @@ static fs::path content, resources, userData, oldCwd;
 static bool loaded=false, contextReady=false, failed=false, mixerReady=false;
 static bool glReady=false;
 static bool firstStart=false;
+static bool resetPending=false;
 static AudioClock audioClock;
 static std::chrono::steady_clock::time_point audioPrevious;
 static std::chrono::steady_clock::time_point simulationPrevious, simulationDeadline;
@@ -252,11 +253,18 @@ RETRO_API bool retro_load_game(const retro_game_info* info) {
         return true;
     } catch(const std::exception& e) { rttr_log(e.what());return false; }
 }
-RETRO_API void retro_unload_game() { suspendedState.clear();if(loaded||game) stopGame();loaded=false;contextReady=false;failed=false; }
+RETRO_API void retro_unload_game() { resetPending=false;suspendedState.clear();if(loaded||game) stopGame();loaded=false;contextReady=false;failed=false; }
 RETRO_API void retro_run() {
     if(!loaded||!contextReady||failed) { if(video) video(nullptr,rttr_width,rttr_height,0);return; }
     try {
         if(poll) poll();
+        // The frontend may call reset without a current GL context. Perform
+        // the existing full teardown here, while the render context is bound.
+        if(resetPending) {
+            resetPending=false;
+            suspendedState.clear();
+            stopGame();
+        }
         if(!game&&!startGame()) throw std::runtime_error("RTTR initialization failed; inspect RTTR log");
         using BindFramebuffer = void (*)(unsigned,unsigned);
         auto bindFramebuffer=reinterpret_cast<BindFramebuffer>(hostProc("glBindFramebuffer"));
@@ -288,7 +296,7 @@ RETRO_API void retro_run() {
         }
     } catch(const std::exception& e) { rttr_log(e.what());failed=true; }
 }
-RETRO_API void retro_reset() {}
+RETRO_API void retro_reset() { if(loaded)resetPending=true; }
 RETRO_API void retro_set_controller_port_device(unsigned,unsigned) {}
 RETRO_API size_t retro_serialize_size() { return loaded?StateCapacity:0; }
 RETRO_API bool retro_serialize(void* data,size_t size) { return game&&!failed&&SerializeGame(data,size); }

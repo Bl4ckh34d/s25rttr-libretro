@@ -107,7 +107,7 @@ int main(int argc,char** argv) {
 #define LOAD(name) auto name=reinterpret_cast<decltype(&::name)>(dlsym(core,#name));if(!name)return 1;
     LOAD(retro_init);LOAD(retro_deinit);LOAD(retro_set_environment);LOAD(retro_set_video_refresh);
     LOAD(retro_set_audio_sample_batch);LOAD(retro_set_input_poll);LOAD(retro_set_input_state);
-    LOAD(retro_load_game);LOAD(retro_run);LOAD(retro_unload_game);
+    LOAD(retro_load_game);LOAD(retro_run);LOAD(retro_unload_game);LOAD(retro_reset);
     LOAD(retro_serialize_size);LOAD(retro_serialize);LOAD(retro_unserialize);
     retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample_batch(audio);
     retro_set_input_poll(poll);retro_set_input_state(input);retro_init();
@@ -120,6 +120,8 @@ int main(int argc,char** argv) {
     std::chrono::steady_clock::time_point phaseStart;
     bool fastForwardPassed=false;
     const bool testContext=std::getenv("RTTR_TEST_CONTEXT_RESET");
+    const bool testReset=std::getenv("RTTR_TEST_RESET");
+    if(testReset&&(!testStates||testContext))return 2;
     if(testStates && !retro_serialize_size()) {std::puts("FAIL save states unsupported");return 1;}
     hw.context_reset();
     std::vector<uint8_t> saved;
@@ -196,7 +198,9 @@ int main(int argc,char** argv) {
             if(!retro_serialize(later.data(),later.size())||!decodeState(later.data(),later.size(),state)||state.gameFrame<=savedFrame)
                 {std::puts("FAIL simulation did not advance after rejected state");return 1;}
             loadFrame=state.gameFrame;
-            if(testContext) {
+            if(testReset) {
+                retro_reset();
+            } else if(testContext) {
                 savedFrame=state.gameFrame;savedMetadata=state;loadFrame=savedFrame+10;
                 hw.context_destroy();
                 eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
@@ -206,7 +210,19 @@ int main(int argc,char** argv) {
                 hw.context_reset();
             } else if(!retro_unserialize(saved.data(),saved.size())) {std::puts("FAIL load state rejected");return 1;}
         }
-        if(testStates && i>(inputState?330u:850u) && !restored) {
+        if(testReset&&i==851) {
+            std::vector<uint8_t> afterReset(saved.size());
+            if(retro_serialize(afterReset.data(),afterReset.size())) {
+                std::puts("FAIL reset left the previous game running");return 1;
+            }
+            std::puts("PASS reset stopped the previous game");
+        }
+        if(testReset&&i==1200) {
+            if(!retro_unserialize(saved.data(),saved.size())) {
+                std::puts("FAIL load after reset rejected");return 1;
+            }
+        }
+        if(testStates && i>(inputState?330u:(testReset?1200u:850u)) && !restored) {
             std::vector<uint8_t> later(saved.size());SavedState state;
             if(retro_serialize(later.data(),later.size())&&decodeState(later.data(),later.size(),state)) {
                 if(state.gameFrame<savedFrame||state.gameFrame>=loadFrame) {std::puts("FAIL game frame not restored");return 1;}
